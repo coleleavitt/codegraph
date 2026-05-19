@@ -45,6 +45,13 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scored cluster selection, and structured-source output are all retained.
   Thanks to [@essopsp](https://github.com/essopsp) for the repro.
 
+### Fixed
+- **MCP**: source-omission markers in `codegraph_explore` and
+  `codegraph_context` output are now language-neutral (`... (gap) ...`,
+  `... (trimmed) ...`, `... (truncated) ...`) instead of C-style `//`
+  comments, which were misleading inside Python, Ruby, and other non-C
+  fenced source blocks.
+
 ## [0.7.10] - 2026-05-19
 
 ### Fixed
