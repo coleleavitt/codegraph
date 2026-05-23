@@ -33,6 +33,7 @@ const EVENT_FANOUT_CAP = 6; // skip events with more handlers/dispatchers than t
 const ON_RE = /\.(?:on|once|addListener)\(\s*['"]([^'"]+)['"]\s*,\s*(?:function\s+(\w+)|(?:this\.)?(\w+))/g;
 const EMIT_RE = /\.(?:emit|fire|dispatchEvent)\(\s*['"]([^'"]+)['"]/g;
 const SETSTATE_RE = /this\.setState\s*\(/;
+const FLUTTER_SETSTATE_RE = /\bsetState\s*\(/; // Flutter: setState((){…}) / this.setState
 const JSX_TAG_RE = /<([A-Z][A-Za-z0-9_]*)[\s/>]/g;
 const MAX_JSX_CHILDREN = 30;
 // Vue SFC templates: kebab-case child components (<el-button> → ElButton) and
@@ -239,6 +240,45 @@ function reactRenderEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[]
 }
 
 /**
+ * Phase 4b: Flutter setState → build (the Dart analog of react-render). In a
+ * StatefulWidget's State class, `setState(() {…})` re-runs `build(context)`, but
+ * that hop is framework-internal (Flutter calls build), so a flow like
+ * "onPressed → _increment → setState → rebuilt UI" dead-ends at setState. Bridge
+ * it: for each Dart class with a `build` method, link every sibling method whose
+ * body calls `setState(` → `build`. The setState gate + `.dart` file keep this to
+ * Flutter State classes. Over-approximation accepted (reachability-correct).
+ */
+function flutterBuildEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const cls of queries.getNodesByKind('class')) {
+    const children = queries.getOutgoingEdges(cls.id, ['contains'])
+      .map((e) => queries.getNodeById(e.target))
+      .filter((n): n is Node => !!n && n.kind === 'method');
+    const build = children.find((n) => n.name === 'build');
+    if (!build || !build.filePath.endsWith('.dart')) continue;
+    let added = 0;
+    for (const m of children) {
+      if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
+      if (m.id === build.id) continue;
+      const content = ctx.readFile(m.filePath);
+      const src = content && sliceLines(content, m.startLine, m.endLine);
+      if (!src || !FLUTTER_SETSTATE_RE.test(src)) continue;
+      const key = `${m.id}>${build.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({
+        source: m.id, target: build.id, kind: 'calls', line: m.startLine,
+        provenance: 'heuristic',
+        metadata: { synthesizedBy: 'flutter-build', via: 'setState', registeredAt: `${build.filePath}:${build.startLine}` },
+      });
+      added++;
+    }
+  }
+  return edges;
+}
+
+/**
  * Phase 5: React JSX child rendering. A component that returns `<Child .../>`
  * mounts Child — React calls it — but JSX instantiation isn't a static call edge,
  * so a render tree (App.render → StaticCanvas → renderStaticScene) breaks at the
@@ -383,10 +423,11 @@ export function synthesizeCallbackEdges(queries: QueryBuilder, ctx: ResolutionCo
   const renderEdges = reactRenderEdges(queries, ctx);
   const jsxEdges = reactJsxChildEdges(ctx);
   const vueEdges = vueTemplateEdges(ctx);
+  const flutterEdges = flutterBuildEdges(queries, ctx);
 
   const merged: Edge[] = [];
   const seen = new Set<string>();
-  for (const e of [...fieldEdges, ...emitterEdges, ...renderEdges, ...jsxEdges, ...vueEdges]) {
+  for (const e of [...fieldEdges, ...emitterEdges, ...renderEdges, ...jsxEdges, ...vueEdges, ...flutterEdges]) {
     const key = `${e.source}>${e.target}`;
     if (seen.has(key)) continue;
     seen.add(key);

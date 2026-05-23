@@ -412,6 +412,20 @@ export class TreeSitterExtractor {
 
     const id = generateNodeId(this.filePath, kind, name, node.startPosition.row + 1);
 
+    // Some grammars (e.g. Dart) model a function/method body as a *sibling* of
+    // the signature node, so the declaration node's own range is just the
+    // signature line. Extend endLine to the resolved body when it sits beyond
+    // the node so the node spans its body — required for any body-level analysis
+    // (callees, the callback synthesizer's body scan, context slices). Guarded to
+    // only ever extend: for child-body grammars the body is within range (no-op).
+    let endLine = node.endPosition.row + 1;
+    if (kind === 'function' || kind === 'method') {
+      const body = this.extractor?.resolveBody?.(node, this.extractor.bodyField);
+      if (body && body.endPosition.row + 1 > endLine) {
+        endLine = body.endPosition.row + 1;
+      }
+    }
+
     const newNode: Node = {
       id,
       kind,
@@ -420,7 +434,7 @@ export class TreeSitterExtractor {
       filePath: this.filePath,
       language: this.language,
       startLine: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
+      endLine,
       startColumn: node.startPosition.column,
       endColumn: node.endPosition.column,
       updatedAt: Date.now(),
