@@ -594,6 +594,45 @@ class OwnerController {
   });
 });
 
+import { playResolver } from '../src/resolution/frameworks/play';
+import { isSourceFile, isPlayRoutesFile } from '../src/extraction/grammars';
+
+describe('playResolver.extract (conf/routes)', () => {
+  it('extracts METHOD /path Controller.action routes, dropping the package + args', () => {
+    const src = `# Routes
+GET     /                    controllers.Application.index
+GET     /computers           controllers.Application.list(p: Int ?= 0, s: Int ?= 2)
+POST    /computers           controllers.Application.save
+-> /v1/posts                 v1.post.PostRouter
+`;
+    const { nodes, references } = playResolver.extract!('conf/routes', src);
+    expect(nodes.map((n) => n.name)).toEqual([
+      'GET /',
+      'GET /computers',
+      'POST /computers',
+    ]); // the `->` include is skipped
+    expect(references.map((r) => r.referenceName)).toEqual([
+      'Application.index',
+      'Application.list',
+      'Application.save',
+    ]);
+  });
+
+  it('only runs on Play routes files', () => {
+    expect(playResolver.extract!('app/Foo.scala', 'GET / controllers.X.y').nodes).toHaveLength(0);
+  });
+});
+
+describe('Play routes file detection', () => {
+  it('recognizes conf/routes (extensionless) and *.routes as source files', () => {
+    expect(isPlayRoutesFile('conf/routes')).toBe(true);
+    expect(isPlayRoutesFile('myapp/conf/routes')).toBe(true);
+    expect(isPlayRoutesFile('conf/admin.routes')).toBe(true);
+    expect(isSourceFile('conf/routes')).toBe(true);
+    expect(isPlayRoutesFile('src/routes.ts')).toBe(false);
+  });
+});
+
 import { goResolver } from '../src/resolution/frameworks/go';
 
 describe('goResolver.extract', () => {
