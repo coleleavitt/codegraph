@@ -53,6 +53,43 @@ const CODEGEN_DECL_RE =
   /codegenNativeComponent\s*(?:<[^>]+>)?\s*\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g;
 
 /**
+ * Legacy Paper view manager macros — older RN libs (still very common,
+ * especially small libs that haven't migrated to Codegen) declare a
+ * ViewManager class and expose props via these macros. Both shapes:
+ *
+ *   RCT_EXPORT_VIEW_PROPERTY(values, NSArray)
+ *   RCT_EXPORT_VIEW_PROPERTY(onChange, RCTBubblingEventBlock)
+ *   RCT_CUSTOM_VIEW_PROPERTY(text, NSString, RNCMyView) { … }
+ *   RCT_REMAP_VIEW_PROPERTY(jsName, nativeKeyPath, NSString)
+ *
+ * Capture the FIRST argument — that's the JS-visible prop name.
+ */
+const RCT_VIEW_PROP_RE =
+  /\bRCT_(?:EXPORT|CUSTOM|REMAP)_VIEW_PROPERTY\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+
+/**
+ * ObjC `@implementation Foo` extraction. Used to identify the ViewManager
+ * class so we can derive a JS-visible component name (strip the `Manager`
+ * suffix and a leading `RCT` prefix, both standard conventions).
+ */
+const OBJC_IMPL_RE = /@implementation\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+/**
+ * Derive the JS-visible component name from a native ViewManager class.
+ * Strip a trailing `Manager` (and optionally `ViewManager`) — RN's view
+ * registry maps `XXXManager` ↔ JS `<XXX/>` by this convention. The
+ * leading `RCT` prefix is also stripped (matches what
+ * `defaultObjcModuleName` does for RN's legacy bridge modules).
+ */
+function deriveComponentNameFromManager(className: string): string {
+  let name = className.startsWith('RCT') ? className.slice(3) : className;
+  // Trim ViewManager > Manager > View, in order.
+  if (name.endsWith('ViewManager')) name = name.slice(0, -'ViewManager'.length);
+  else if (name.endsWith('Manager')) name = name.slice(0, -'Manager'.length);
+  return name;
+}
+
+/**
  * Cheap source-level detector — must contain `codegenNativeComponent` to
  * be worth parsing. The presence of that import is the canonical Fabric
  * spec signal.
@@ -94,6 +131,163 @@ function extractPropNames(body: string): string[] {
     props.push(name);
   }
   return props;
+}
+
+/**
+ * Extract legacy Paper view-manager declarations from a .m/.mm file.
+ * Emits a `component` node named after the JS-visible name (derived from
+ * the @implementation class) plus a `property` node per
+ * `RCT_EXPORT_VIEW_PROPERTY(name, ...)` macro.
+ *
+ * Returns `[]` if the file doesn't look like a ViewManager (no
+ * RCT_EXPORT_VIEW_PROPERTY macros).
+ */
+function extractLegacyViewManagerNodes(filePath: string, source: string): Node[] {
+  // Cheap gate: no view-property macros at all → not a view manager.
+  if (!source.includes('RCT_EXPORT_VIEW_PROPERTY') &&
+      !source.includes('RCT_CUSTOM_VIEW_PROPERTY') &&
+      !source.includes('RCT_REMAP_VIEW_PROPERTY')) {
+    return [];
+  }
+  const implMatch = source.match(OBJC_IMPL_RE);
+  if (!implMatch || !implMatch[1]) return [];
+  const className = implMatch[1];
+  // Only process actual ViewManagers — classes ending in Manager or
+  // (legacy) ViewManager. Classes with view-property macros that don't
+  // follow the naming convention are unusual; skip to keep precision.
+  if (!className.endsWith('Manager') && !className.endsWith('ViewManager')) return [];
+  const componentName = deriveComponentNameFromManager(className);
+  if (!componentName) return [];
+
+  const now = Date.now();
+  const nodes: Node[] = [];
+
+  // Component node — same shape as Codegen Fabric's, so the
+  // fabricNativeImplEdges synthesizer linking component → native class
+  // works for legacy too. The native class IS the manager itself in this
+  // case; the convention-based suffix lookup in the synthesizer
+  // (`Manager`, `ViewManager`) will find it.
+  const before = source.slice(0, implMatch.index ?? 0);
+  const startLine = before.split('\n').length;
+  nodes.push({
+    id: `fabric-component:${filePath}:${componentName}:${startLine}`,
+    kind: 'component',
+    name: componentName,
+    qualifiedName: `${filePath}::${componentName}`,
+    filePath,
+    language: 'objc',
+    startLine,
+    endLine: startLine,
+    startColumn: 0,
+    endColumn: componentName.length,
+    docstring: `Legacy Paper ViewManager component '${componentName}' (from @implementation ${className})`,
+    signature: `RCT_EXPORT_MODULE() // ViewManager: ${className}`,
+    isExported: true,
+    updatedAt: now,
+  });
+
+  // Property nodes per RCT_EXPORT_VIEW_PROPERTY macro.
+  const seen = new Set<string>();
+  RCT_VIEW_PROP_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = RCT_VIEW_PROP_RE.exec(source)) !== null) {
+    const propName = m[1]!;
+    if (seen.has(propName)) continue;
+    seen.add(propName);
+    const propBefore = source.slice(0, m.index);
+    const propLine = propBefore.split('\n').length;
+    nodes.push({
+      id: `fabric-prop:${filePath}:${propName}:${propLine}`,
+      kind: 'property',
+      name: propName,
+      qualifiedName: `${filePath}::${componentName}.${propName}`,
+      filePath,
+      language: 'objc',
+      startLine: propLine,
+      endLine: propLine,
+      startColumn: 0,
+      endColumn: propName.length,
+      docstring: `Legacy Paper view prop '${propName}' on ${componentName}`,
+      isExported: true,
+      updatedAt: now,
+    });
+  }
+  return nodes;
+}
+
+/**
+ * Java/Kotlin `@ReactProp("name")` extraction. The annotation precedes a
+ * setter method on a class that extends `ViewManager` /
+ * `SimpleViewManager` (or in Kotlin, `:` syntax).
+ *
+ * Returns `[]` if no @ReactProp annotations are found.
+ */
+function extractJvmViewManagerNodes(filePath: string, source: string): Node[] {
+  if (!source.includes('@ReactProp')) return [];
+
+  // Class name — looking for `class FooManager [extends ViewManager...]`
+  // (Java) or `class FooManager : ViewManager...` (Kotlin). Either gates
+  // us into a ViewManager file; non-Manager classes with @ReactProp are
+  // unusual.
+  const classMatch = source.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
+  if (!classMatch || !classMatch[1]) return [];
+  const className = classMatch[1];
+  if (!className.endsWith('Manager') && !className.endsWith('ViewManager')) return [];
+  const componentName = deriveComponentNameFromManager(className);
+  if (!componentName) return [];
+
+  const language: 'java' | 'kotlin' = filePath.endsWith('.kt') ? 'kotlin' : 'java';
+  const now = Date.now();
+  const nodes: Node[] = [];
+
+  const classBefore = source.slice(0, classMatch.index ?? 0);
+  const startLine = classBefore.split('\n').length;
+  nodes.push({
+    id: `fabric-component:${filePath}:${componentName}:${startLine}`,
+    kind: 'component',
+    name: componentName,
+    qualifiedName: `${filePath}::${componentName}`,
+    filePath,
+    language,
+    startLine,
+    endLine: startLine,
+    startColumn: 0,
+    endColumn: componentName.length,
+    docstring: `Android view-manager component '${componentName}' (from class ${className})`,
+    signature: `class ${className} : ViewManager`,
+    isExported: true,
+    updatedAt: now,
+  });
+
+  // @ReactProp("name") followed (after optional modifiers / args) by a
+  // setter declaration. The annotation argument is the JS-visible prop
+  // name. Permissive about the rest — we only need the literal.
+  const REACT_PROP_RE = /@ReactProp\s*\(\s*(?:name\s*=\s*)?"([^"]+)"/g;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = REACT_PROP_RE.exec(source)) !== null) {
+    const propName = m[1]!;
+    if (seen.has(propName)) continue;
+    seen.add(propName);
+    const propBefore = source.slice(0, m.index);
+    const propLine = propBefore.split('\n').length;
+    nodes.push({
+      id: `fabric-prop:${filePath}:${propName}:${propLine}`,
+      kind: 'property',
+      name: propName,
+      qualifiedName: `${filePath}::${componentName}.${propName}`,
+      filePath,
+      language,
+      startLine: propLine,
+      endLine: propLine,
+      startColumn: 0,
+      endColumn: propName.length,
+      docstring: `Android @ReactProp prop '${propName}' on ${componentName}`,
+      isExported: true,
+      updatedAt: now,
+    });
+  }
+  return nodes;
 }
 
 function extractFabricNodes(filePath: string, source: string): Node[] {
@@ -169,26 +363,43 @@ function extractFabricNodes(filePath: string, source: string): Node[] {
 
 export const fabricViewResolver: FrameworkResolver = {
   name: 'fabric-view',
-  languages: ['typescript', 'tsx'],
+  languages: ['typescript', 'tsx', 'objc', 'java', 'kotlin'],
 
   detect(context) {
-    // Detect on package.json alone: an RN project has the dep. We
-    // initially scanned for a `codegenNativeComponent` marker file too,
-    // but on big repos (RNScreens has ~1500 source files; fabric specs
-    // come alphabetically after FabricExample/ etc., past any reasonable
-    // scan budget) the marker check times out and produces false-
-    // negatives. Detect lightly, and let the per-file `extract()` decide
-    // which files actually have Fabric specs — extract() is essentially
-    // free on non-spec files (a short `includes('codegenNativeComponent')`).
-    const pkg = context.readFile('package.json');
-    return pkg ? /["']react-native["']\s*:/.test(pkg) : false;
+    // Root package.json is the common case. The indexer only tracks
+    // SOURCE files in getAllFiles(), so package.jsons in subpackages
+    // aren't enumerable that way — we have to probe them explicitly via
+    // listDirectories() for monorepos.
+    const checkPkg = (relativePath: string) => {
+      const pkg = context.readFile(relativePath);
+      return pkg ? /["']react-native["']\s*:/.test(pkg) : false;
+    };
+    if (checkPkg('package.json')) return true;
+    // Monorepo escape hatch — react-native-skia and similar workspace
+    // repos have the RN dep only in `packages/<sub>/package.json`. Walk
+    // the common workspace roots one level deep.
+    const list = context.listDirectories;
+    if (!list) return false;
+    for (const root of ['packages', 'apps', 'modules', 'libraries']) {
+      for (const sub of list(root) ?? []) {
+        if (checkPkg(`${root}/${sub}/package.json`)) return true;
+      }
+    }
+    return false;
   },
 
   extract(filePath, source): FrameworkExtractionResult {
-    return {
-      nodes: extractFabricNodes(filePath, source),
-      references: [],
-    };
+    // Pick the right extractor by file language. The framework registry
+    // already filters by `languages` so we only see relevant files.
+    let nodes: Node[] = [];
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+      nodes = extractFabricNodes(filePath, source);
+    } else if (filePath.endsWith('.m') || filePath.endsWith('.mm')) {
+      nodes = extractLegacyViewManagerNodes(filePath, source);
+    } else if (filePath.endsWith('.java') || filePath.endsWith('.kt')) {
+      nodes = extractJvmViewManagerNodes(filePath, source);
+    }
+    return { nodes, references: [] };
   },
 
   resolve() {

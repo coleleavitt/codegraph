@@ -543,9 +543,15 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
  *
  * Provenance `'heuristic'`, synthesizedBy `'rn-event-channel'`.
  */
-// ObjC's `sendEventWithName:@"X"` shape. We don't need to track the
-// `body:` argument — just the event name.
+// ObjC's `[self sendEventWithName:@"X" body:...]` shape (bracket syntax,
+// `@` string literals).
 const RN_OBJC_SEND_RE = /\bsendEventWithName\s*:\s*@"([^"]+)"/g;
+// Swift's `sendEvent(withName: "X", body: ...)` shape — same RCTEventEmitter
+// method, different call syntax. Both Objective-C and Swift subclass
+// RCTEventEmitter so this catches the Swift-side equivalent emission sites
+// (e.g. RNFusedLocation.swift's `sendEvent(withName: "geolocationDidChange",
+// body: locationData)`).
+const RN_SWIFT_SEND_RE = /\bsendEvent\s*\(\s*withName\s*:\s*"([^"]+)"/g;
 // JVM-side emitter calls: `emitter.emit("X", body)`. Matches both Java
 // and Kotlin syntax because the call form is identical. Restricted to
 // JVM source files in the consumer so we don't re-process JS emits
@@ -579,6 +585,15 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       RN_OBJC_SEND_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = RN_OBJC_SEND_RE.exec(content))) {
+        if (m[1]) addDispatcher(m[1], lineOf(m.index));
+      }
+    }
+
+    // Swift side: same RCTEventEmitter method, parens/named-args syntax.
+    if (file.endsWith('.swift')) {
+      RN_SWIFT_SEND_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = RN_SWIFT_SEND_RE.exec(content))) {
         if (m[1]) addDispatcher(m[1], lineOf(m.index));
       }
     }
@@ -632,6 +647,25 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
           // way to user code. Reachability-correct attribution.
           const enclosing = enclosingFn(nodesInFile, lineOf(m.index));
           targetId = enclosing?.id ?? null;
+        }
+        if (!targetId) {
+          // Broader fallback for JS object-literal API shape
+          // (`const Foo = { watchX(...) { … addListener(...) … } }`):
+          // method shorthand inside an object literal isn't extracted
+          // as a method node, so enclosingFn returns null. Attribute to
+          // the smallest enclosing `constant` / `variable` node — that's
+          // the API surface a downstream caller would `import` and
+          // invoke. Reachability-correct.
+          const line = lineOf(m.index);
+          let smallest: typeof nodesInFile[number] | null = null;
+          for (const n of nodesInFile) {
+            if (n.kind !== 'constant' && n.kind !== 'variable') continue;
+            const end = n.endLine ?? n.startLine;
+            if (n.startLine <= line && end >= line) {
+              if (!smallest || n.startLine >= smallest.startLine) smallest = n;
+            }
+          }
+          targetId = smallest?.id ?? null;
         }
         if (!targetId) continue;
         const map = jsHandlersByEvent.get(event) ?? new Map<string, string>();
