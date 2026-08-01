@@ -1,0 +1,320 @@
+# Instincts generated from https://github.com/coleleavitt/codegraph
+# Generated: 2026-08-01T03:04:54.912Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: codegraph-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix
+
+## Evidence
+
+- 2 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix(installer): write the Claude prompt hook as codegraph.cmd on Windows (#1466) (#1489), fix(db): stop watchdog-killed sessions from leaking the SQLite WAL without bound (#1431) (#1490)
+
+---
+id: codegraph-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Commit Length
+
+## Action
+
+Write moderate-length commit messages (~92 characters)
+
+## Evidence
+
+- Average commit message length: 92 chars
+- Based on 2 commits
+
+---
+id: codegraph-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: codegraph-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: codegraph-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: codegraph-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/codegraph
+---
+
+# Codegraph Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: codegraph-instinct-file-naming
+trigger: "When creating a new file in the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct File Naming
+
+## Action
+
+Name the file using camelCase convention
+
+## Evidence
+
+- Pattern in namingConventions.files: camelCase
+
+---
+id: codegraph-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Function Naming
+
+## Action
+
+Use camelCase for the function name
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: codegraph-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Class Naming
+
+## Action
+
+Use PascalCase for the class name
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: codegraph-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for the constant name
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: codegraph-instinct-import-style
+trigger: "When importing modules within the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: codegraph-instinct-export-style
+trigger: "When exporting functions, classes, or constants"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: codegraph-instinct-error-handling
+trigger: "When handling potential errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Error Handling
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- Pattern in errorHandling.style: try-catch
+
+---
+id: codegraph-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Test Location
+
+## Action
+
+Place test files in the separate __tests__ directory
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation: separate
+- Pattern in architecture.folderStructure.commonFolders: __tests__
+
+---
+id: codegraph-instinct-git-commit-prefix
+trigger: "When writing a commit message for a bug fix"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Git Commit Prefix
+
+## Action
+
+Start the commit message with the prefix 'fix'
+
+## Evidence
+
+- Seen in commit: fix(installer): write the Claude prompt hook as codegraph.cmd on Windows (#1466) (#1489)
+- Pattern in commits.prefixes: fix
+
+---
+id: codegraph-instinct-git-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: coleleavitt/codegraph
+---
+
+# Codegraph Instinct Git Commit Format
+
+## Action
+
+Follow the conventional commit format: <type>(<scope>): <description> (issue references)
+
+## Evidence
+
+- Seen in commit: fix(db): stop watchdog-killed sessions from leaking the SQLite WAL without bound (#1431) (#1490)
+- Pattern in commits.type: conventional
+
